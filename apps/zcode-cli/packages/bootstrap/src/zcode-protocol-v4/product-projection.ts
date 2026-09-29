@@ -3208,10 +3208,59 @@ export class ProductProjection {
 
   private onPermissionResolved(event: SessionEvent): ConversationDelta[] {
     const payload = event.payload as PermissionResolvedPayload;
-    return this.settlePermission(
+    // AskUserQuestion 的用户答案通过 permission modify 决策合入 modifiedInput；
+    // settlePermission 只改 status，若不同步 row.input，实时流里 ToolCallRow.input
+    // 停留在模型原始输入（无 answers），工具卡展开时 UI 读不到答案、显示「未提供回答」。
+    // 终态以 ToolCallResult（executor 用 executionInput 持久化）为准，这里只补齐实时窗口。
+    const settled = this.settlePermission(
       String(payload.toolCallId),
       payload.decision === "deny" ? "cancelled" : "running",
     );
+    return this.mergeModifiedPermissionInputIntoDeltas(
+      settled,
+      String(payload.toolCallId),
+      payload.decision,
+      payload.modifiedInput,
+    );
+  }
+
+  /** 把 modify 决策的 modifiedInput 合进本事件已产出的 row.upserted delta。
+   * 必须合并且不可追加第二个 delta：apply 是整行替换，两个基于同一旧 row 的 delta
+   * 先后 apply 时，后者会把前者写入的 input 用旧值覆盖回去。 */
+  private mergeModifiedPermissionInputIntoDeltas(
+    deltas: ConversationDelta[],
+    toolCallId: string,
+    decision: PermissionResolvedPayload["decision"],
+    modifiedInput: unknown,
+  ): ConversationDelta[] {
+    if (decision !== "modify" || !isPlainRecord(modifiedInput)) return deltas;
+    let merged = false;
+    const next = deltas.map((delta) => {
+      if (delta.op !== "row.upserted" || delta.row.kind !== "toolCall") return delta;
+      if (delta.row.toolCallId !== toolCallId) return delta;
+      merged = true;
+      return {
+        ...delta,
+        row: {
+          ...delta.row,
+          input: { ...modifiedInput },
+        },
+      };
+    });
+    if (merged) return next;
+    // settlePermission 未产出该行（如尚未建立 toolRow 索引）时兜底自建一个 upsert。
+    const row = this.findToolRow(toolCallId);
+    if (!row) return next;
+    return [
+      ...next,
+      {
+        op: "row.upserted" as const,
+        row: {
+          ...row,
+          input: { ...modifiedInput },
+        },
+      },
+    ];
   }
 
   private onPermissionDenied(event: SessionEvent): ConversationDelta[] {

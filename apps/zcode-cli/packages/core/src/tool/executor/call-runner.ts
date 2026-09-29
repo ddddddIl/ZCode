@@ -517,6 +517,9 @@ async function executeToolCallImpl(
         toolName: canonicalToolCall.name,
         success: true,
         output,
+        // AskUserQuestion 的用户答案由 permission modify 合入 executionInput；
+        // 不回传会在持久化 part.state.input 与 v4 投影 row.input 中丢失（UI 显示「未提供回答」）。
+        executionInput,
         display,
         modelContent: finalModelContent,
         ...(readFileStateMetadata ? { readFileStateMetadata } : {}),

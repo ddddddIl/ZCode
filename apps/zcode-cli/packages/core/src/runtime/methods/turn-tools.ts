@@ -312,7 +312,10 @@ export async function executeToolCallsForModelStep(
           state: result.success
             ? {
                 status: "completed",
-                input: persisted.input,
+                // AskUserQuestion 的用户答案只存在于 executionInput（permission modify
+                // 合入 input.answers）；回读原始 persisted.input 会让冷恢复后的
+                // v4 投影 row.input 丢失 answers，UI 展示「未提供回答」。
+                input: toRecordInput(result.executionInput ?? persisted.input),
                 output: content,
                 title: projectedResultToolName.toolName,
                 metadata: {
@@ -329,7 +332,7 @@ export async function executeToolCallsForModelStep(
               }
             : {
                 status: "error",
-                input: persisted.input,
+                input: toRecordInput(result.executionInput ?? persisted.input),
                 error: result.error?.message ?? content,
                 // state.error 面向 UI / 日志，可能比模型实际收到的
                 // modelContent 更笼统；仅附加保存 string 内容供冷恢复精确重放。
@@ -402,7 +405,9 @@ export async function executeToolCallsForModelStep(
         executionTiming: streamedResultsById.has(result.toolCallId as ToolCallId)
           ? "during_stream"
           : "end_of_stream",
-        input: persisted?.input,
+        input: result.executionInput !== undefined
+          ? toRecordInput(result.executionInput)
+          : persisted?.input,
         startedAt: result.startedAt,
         committedAt: result.completedAt,
         resultPartId,

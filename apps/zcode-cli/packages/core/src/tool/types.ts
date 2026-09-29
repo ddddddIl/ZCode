@@ -411,6 +411,10 @@ export interface ToolExecutionResult {
   toolName: string;
   success: boolean;
   output: unknown;
+  /** 实际执行入参（permission modify / hook 改写后的版本，可能等于原始 input）。
+   * AskUserQuestion 的用户答案只存在于该版本（被合入 input.answers），
+   * 持久化与投影若回读原始 toolCall.input 会在 UI 侧丢失答案。 */
+  executionInput?: unknown;
   turnControl?: ToolExecutionTurnControl;
   followUpUserInput?: ToolExecutionFollowUpUserInput;
   display?: ToolResultDisplayPayload;

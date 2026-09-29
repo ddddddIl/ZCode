@@ -64,6 +64,43 @@ test("current question results work while Claude ACP text is no longer interpret
   }
 });
 
+test("v4 projected AskUserQuestion rows expose answers via merged input", () => {
+  // 修复后：permission modify 把用户答案合入 toolCall.input（实时投影 + 持久化冷恢复），
+  // UI 从 input.answers 读回答案，而不是依赖 output 的模型叙事文本。
+  const questions = [
+    { question: "Choose", header: "Choice", options: [{ label: "One" }, { label: "Two" }] },
+  ];
+  const answeredInput = {
+    questions,
+    answers: { Choose: "One" },
+    metadata: { source: "test" },
+  };
+  assert.deepEqual(readAskUserQuestionAnswers({ input: answeredInput }), {
+    Choose: "One",
+  });
+  // output 仍是模型叙事文本（User has answered...）；不能因此丢失 input.answers。
+  assert.deepEqual(
+    readAskUserQuestionAnswers({
+      input: answeredInput,
+      output: 'User has answered your questions: "Choose"="One".',
+    }),
+    { Choose: "One" },
+  );
+  // 多题多选：answers 按问题文本键控，数组值拼接展示。
+  const multiInput = {
+    questions: [
+      {
+        question: "Features",
+        header: "Feat",
+        multiSelect: true,
+        options: [{ label: "A" }, { label: "B" }],
+      },
+    ],
+    answers: { Features: "A, B" },
+  };
+  assert.deepEqual(readAskUserQuestionAnswers({ input: multiInput }), { Features: "A, B" });
+});
+
 test("ZCode subagent identity wins over retired Codex nicknames", () => {
   const tool = {
     id: "tool-example",
