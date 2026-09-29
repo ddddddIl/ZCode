@@ -30,7 +30,9 @@ jobs:
       PNPM_VERSION: "10.33.2"
       TARGET: ${{ inputs.target || 'win-x64' }}
       ELECTRON_MIRROR: "https://npmmirror.com/mirrors/electron/"
-      ELECTRON_BUILDER_BINARIES_MIRROR: "https://registry.npmmirror.com/-binary/electron-builder-binaries/"
+      # electron-builder binaries 镜像由 bundle.mjs 的 resolveElectronBuilderBinariesMirror
+      # 自动解析（默认 npmmirror，格式 https://registry.npmmirror.com/-/binary/...）；
+      # 手工覆盖容易拼错路径导致 404，不在这里重复设置。
 
     steps:
       - name: Checkout
