@@ -1,0 +1,107 @@
+name: Build Desktop
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "打包目标"
+        required: true
+        default: "win-x64"
+        type: choice
+        options:
+          - win-x64
+          - linux-x64
+          - mac-arm64
+          - mac-x64
+
+concurrency:
+  group: build-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ inputs.target || 'win-x64' }})
+    runs-on: ${{ (inputs.target || 'win-x64') == 'win-x64' && 'windows-latest' || (startsWith(inputs.target || 'win-x64', 'mac') && 'macos-latest' || 'ubuntu-latest') }}
+    timeout-minutes: 90
+    env:
+      # mise.toml 锁定的版本
+      PNPM_VERSION: "10.33.2"
+      TARGET: ${{ inputs.target || 'win-x64' }}
+      ELECTRON_MIRROR: "https://npmmirror.com/mirrors/electron/"
+      ELECTRON_BUILDER_BINARIES_MIRROR: "https://registry.npmmirror.com/-binary/electron-builder-binaries/"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.14.0"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.33.2"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve bundle target
+        id: target
+        shell: bash
+        run: |
+          case "$TARGET" in
+            win-x64)   echo "os=win"    >> "$GITHUB_OUTPUT"; echo "arch=x64"   >> "$GITHUB_OUTPUT"; echo "ext=exe"     >> "$GITHUB_OUTPUT" ;;
+            linux-x64) echo "os=linux"  >> "$GITHUB_OUTPUT"; echo "arch=x64"   >> "$GITHUB_OUTPUT"; echo "ext=AppImage" >> "$GITHUB_OUTPUT" ;;
+            mac-arm64) echo "os=mac"    >> "$GITHUB_OUTPUT"; echo "arch=arm64" >> "$GITHUB_OUTPUT"; echo "ext=dmg"    >> "$GITHUB_OUTPUT" ;;
+            mac-x64)   echo "os=mac"    >> "$GITHUB_OUTPUT"; echo "arch=x64"   >> "$GITHUB_OUTPUT"; echo "ext=dmg"    >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unknown target: $TARGET" >&2; exit 1 ;;
+          esac
+
+      - name: Prepare local runtime assets
+        run: node packages/desktop/scripts/ensure-local-runtime-assets.mjs
+
+      - name: Build desktop agent CLI bundle
+        run: node scripts/build-desktop-agent-cli.mjs
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+
+      - name: Build desktop (production)
+        run: pnpm --filter @zcode/desktop run build:no-runtime-assets
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+
+      - name: Bundle installer
+        run: node packages/desktop/scripts/bundle.mjs --os ${{ steps.target.outputs.os }} --arch ${{ steps.target.outputs.arch }} --skip-prepare --skip-build
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+          ZCODE_TARGET_OS: ${{ steps.target.outputs.os }}
+          ZCODE_TARGET_ARCH: ${{ steps.target.outputs.arch }}
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p artifact
+          shopt -s nullglob nocaseglob
+          for f in packages/desktop/dist/*.exe packages/desktop/dist/*.dmg packages/desktop/dist/*.AppImage packages/desktop/dist/*.zip packages/desktop/dist/*.deb; do
+            [ -f "$f" ] && cp "$f" artifact/
+          done
+          ls -la artifact/
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcode-desktop-${{ steps.target.outputs.os }}-${{ steps.target.outputs.arch }}
+          path: artifact/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Release (tag only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifact/*
+          generate_release_notes: true
